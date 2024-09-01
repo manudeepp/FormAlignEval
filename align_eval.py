@@ -10,6 +10,7 @@ import pytesseract
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from datetime import datetime
+import math
 
 # Toggle debugging
 DEBUG = True
@@ -19,8 +20,9 @@ def debug_print(message):
         print(message)
 
 # Paths for input/output
-pdf_path = 'C:\\Users\\pmanu\\Desktop\\ORBvsFREAKvsSIFT\\pdfInputs'  # Adjust the path to your PDFs
-png_output_path = 'C:\\Users\\pmanu\\Desktop\\ORBvsFREAKvsSIFT\\output_pngs'  # Where the PNG files will be saved
+pdf_path = 'pdfInputs'  # Adjust the path to your PDFs
+png_output_path = 'outputImages'  # Where the PNG files will be saved
+reslts_folder_path = 'results'
 
 # Convert PDFs to PNGs
 pdf_files = glob.glob(os.path.join(pdf_path, '*.pdf'))
@@ -31,6 +33,10 @@ if not os.path.exists(png_output_path):
 else:
     shutil.rmtree(png_output_path)
     os.makedirs(png_output_path)
+
+# Create the results folder if it doesn't exist, or clear it if it does
+if not os.path.exists(reslts_folder_path):
+    os.makedirs(reslts_folder_path)
 
 debug_print(f"Processing PDF files in {pdf_path}")
 
@@ -51,9 +57,10 @@ features_list = [512, 1024, 1589, 2048, 4096, 5192, 10245, 15689, 25849, 35469]
 results_orb = {'processing_times': [], 'cumulative_times': [], 'matches': [], 'success': 0, 'features': [], 'aligned_images': []}
 results_sift = {'processing_times': [], 'cumulative_times': [], 'matches': [], 'success': 0, 'features': [], 'aligned_images': []}
 results_freak = {'processing_times': [], 'cumulative_times': [], 'matches': [], 'success': 0, 'features': [], 'aligned_images': []}
+results_freak_sift = {'processing_times': [], 'cumulative_times': [], 'matches': [], 'success': 0, 'features': [], 'aligned_images': []}
 
 # Load the CSV file with the keypoint coordinates and check phrases
-csv_file_path = 'C:\\Users\\pmanu\\Desktop\\ORBvsFREAKvsSIFT\\keypoint_checklist.csv'  # Adjust the path to your CSV file
+csv_file_path = 'keypointsLocations.csv'  # Adjust the path to your CSV file
 keypoints_df = pd.read_csv(csv_file_path)
 
 # Convert the DataFrame into a dictionary for easier access
@@ -175,31 +182,37 @@ def align_images_sift(template_img, scanned_img, max_features):
 
     return img_matches, aligned_img, len(matches)
 
+# New function to align images using FREAK until 15000 features and switch to SIFT if FREAK fails
+def align_images_freak_sift(template_img, scanned_img, max_features):
+    if max_features <= 15000:
+        # Use FREAK for features <= 15000
+        return align_images_freak(template_img, scanned_img, max_features)
+    else:
+        # Try FREAK first
+        img_matches, aligned_img, matches = align_images_freak(template_img, scanned_img, max_features)
+        
+        # Check if the alignment was successful
+        if aligned_img is not None:
+            aligned = check_alignment(aligned_img, keypoints_dict)
+            if aligned:
+                return img_matches, aligned_img, matches  # Return FREAK results if successful
+        
+        # If FREAK fails or alignment is unsuccessful, switch to SIFT
+        return align_images_sift(template_img, scanned_img, max_features)
+
 def check_alignment(aligned_image, keypoints_dict):
     num_regions_to_check = len(keypoints_dict['x1'])
     
-    # Display the aligned image using matplotlib
-    plt.imshow(aligned_image, cmap='gray')
-    plt.title('Aligned Image')
-    plt.axis('off')
-    plt.show()
-
     # Sequentially check each keypoint
     for i in range(num_regions_to_check):
         # Extract the region of interest based on the coordinates
         roi = aligned_image[keypoints_dict['y1'][i]:keypoints_dict['y2'][i],
                             keypoints_dict['x1'][i]:keypoints_dict['x2'][i]]
         
-        # Display the region of interest using matplotlib
-        plt.imshow(roi, cmap='gray')
-        plt.title(f'ROI {i}')
-        plt.axis('off')
-        plt.show()
-
         # Use Tesseract to extract text from the region
         extracted_text = pytesseract.image_to_string(roi, config='--psm 6')
         extracted_text = extracted_text.lower().strip()
-        debug_print(f",,,,,,,,, extracted Text{i}:{extracted_text}----------------")
+        debug_print(f"Extracted Text{i}:{extracted_text}")
 
         # Get the list of possible correct phrases
         check_phrases = keypoints_dict['checkPhraseList'][i].split(', ')
@@ -212,9 +225,9 @@ def check_alignment(aligned_image, keypoints_dict):
     return True  # All keypoints matched
 
 # Main loop to generate results and comparison PDF
-pdf_filename = f"Alignment_Results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+pdf_filename = f"results\\Alignment_Results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 with PdfPages(pdf_filename) as pdf:
-    template_img = cv2.imread('C:\\Users\\pmanu\\Desktop\\ORBvsFREAKvsSIFT\\template_image1.png', 0)
+    template_img = cv2.imread('template.png', 0)
     
     for form_image_path in form_images:
         debug_print(f"Processing form image: {form_image_path}")
@@ -222,7 +235,11 @@ with PdfPages(pdf_filename) as pdf:
 
         form_results = {}  # Clear form_results for each form
 
-        for algo_name, align_func, results in zip(['ORB', 'SIFT', 'FREAK'], [align_images_orb, align_images_sift, align_images_freak], [results_orb, results_sift, results_freak]):
+        for algo_name, align_func, results in zip(
+            ['ORB', 'SIFT', 'FREAK', 'FREAK+SIFT'], 
+            [align_images_orb, align_images_sift, align_images_freak, align_images_freak_sift], 
+            [results_orb, results_sift, results_freak, results_freak_sift]
+        ):
             first_success = None
             cumulative_time = 0
 
@@ -258,32 +275,38 @@ with PdfPages(pdf_filename) as pdf:
                 # Store failure in form_results if alignment was unsuccessful
                 form_results[algo_name] = (None, None, None, cumulative_time)
 
-    # Generate PDF page with results for each algorithm
-        fig, axs = plt.subplots(2, 2, figsize=(10, 10))
+        # Determine the number of algorithms
+        num_algorithms = len(form_results)
+
+        # Calculate the number of rows and columns needed
+        num_cols = 2  # Set the number of columns
+        num_rows = math.ceil(num_algorithms / num_cols)  # Calculate the number of rows
+
+        # Generate PDF page with results for each algorithm
+        fig, axs = plt.subplots(num_rows, num_cols, figsize=(10, 10))
         fig.suptitle(f"Alignment Results for {os.path.basename(form_image_path)}")
 
-        # Original image
-        axs[0, 0].imshow(scanned_img, cmap='gray')
-        axs[0, 0].set_title("Original Image")
-        axs[0, 0].axis('off')
+        # Flatten axs array if it's multidimensional (necessary for easy iteration)
+        axs = axs.flatten() if num_rows * num_cols > 1 else [axs]
 
         # Display the aligned images or failure messages for each algorithm
-        for i, (algo_name, result) in enumerate(form_results.items(), 1):
+        for i, (algo_name, result) in enumerate(form_results.items()):
             features, matches, aligned_img, _ = result
 
             if aligned_img is not None:
-                axs[i // 2, i % 2].imshow(aligned_img, cmap='gray')
-                axs[i // 2, i % 2].set_title(f"{algo_name} Aligned (Features: {features})")
+                axs[i].imshow(aligned_img, cmap='gray')
+                axs[i].set_title(f"{algo_name} Aligned (Features: {features})")
             else:
-                axs[i // 2, i % 2].text(0.5, 0.5, f"{algo_name} Alignment Failed", horizontalalignment='center', verticalalignment='center')
-            axs[i // 2, i % 2].axis('off')
+                axs[i].text(0.5, 0.5, f"{algo_name} Alignment Failed", horizontalalignment='center', verticalalignment='center')
+            axs[i].axis('off')
+
+        # Hide any remaining empty subplots
+        for j in range(i + 1, len(axs)):
+            fig.delaxes(axs[j])
 
         # Save the page to the PDF
         pdf.savefig(fig)
         plt.close(fig)
-
-
-
 
     # Generate comparison graphs for metrics
     fig, axs = plt.subplots(3, 2, figsize=(15, 15))
@@ -291,39 +314,40 @@ with PdfPages(pdf_filename) as pdf:
     fig.delaxes(axs[2, 1])  # This removes the sixth plot
 
     # Average Processing Time
-    axs[0, 0].bar(['ORB', 'SIFT', 'FREAK'], 
-                  [np.mean(results_orb['processing_times']), np.mean(results_sift['processing_times']), np.mean(results_freak['processing_times'])], 
-                  color=['red', 'blue', 'green'])
+    axs[0, 0].bar(['ORB', 'SIFT', 'FREAK', 'FREAK+SIFT'], 
+                  [np.mean(results_orb['processing_times']), np.mean(results_sift['processing_times']), np.mean(results_freak['processing_times']), np.mean(results_freak_sift['processing_times'])], 
+                  color=['red', 'blue', 'green', 'purple'])
     axs[0, 0].set_title('Average Processing Time per Attempt')
     axs[0, 0].set_ylabel('Time (seconds)')
 
     # Average Cumulative Time
-    axs[0, 1].bar(['ORB', 'SIFT', 'FREAK'], 
-                  [np.mean(results_orb['cumulative_times']), np.mean(results_sift['cumulative_times']), np.mean(results_freak['cumulative_times'])], 
-                  color=['red', 'blue', 'green'])
+    axs[0, 1].bar(['ORB', 'SIFT', 'FREAK', 'FREAK+SIFT'], 
+                  [np.mean(results_orb['cumulative_times']), np.mean(results_sift['cumulative_times']), np.mean(results_freak['cumulative_times']), np.mean(results_freak_sift['cumulative_times'])], 
+                  color=['red', 'blue', 'green', 'purple'])
     axs[0, 1].set_title('Average Total Processing Time per Form')
     axs[0, 1].set_ylabel('Time (seconds)')
 
     # Success Rate
-    axs[1, 0].bar(['ORB', 'SIFT', 'FREAK'], 
+    axs[1, 0].bar(['ORB', 'SIFT', 'FREAK', 'FREAK+SIFT'], 
                   [results_orb['success'] / len(form_images) * 100, 
                    results_sift['success'] / len(form_images) * 100, 
-                   results_freak['success'] / len(form_images) * 100], 
-                  color=['red', 'blue', 'green'])
+                   results_freak['success'] / len(form_images) * 100,
+                   results_freak_sift['success'] / len(form_images) * 100], 
+                  color=['red', 'blue', 'green', 'purple'])
     axs[1, 0].set_title('Alignment Success Rate')
     axs[1, 0].set_ylabel('Success Rate (%)')
 
     # Average Matches
-    axs[1, 1].bar(['ORB', 'SIFT', 'FREAK'], 
-                  [np.mean(results_orb['matches']), np.mean(results_sift['matches']), np.mean(results_freak['matches'])], 
-                  color=['red', 'blue', 'green'])
+    axs[1, 1].bar(['ORB', 'SIFT', 'FREAK', 'FREAK+SIFT'], 
+                  [np.mean(results_orb['matches']), np.mean(results_sift['matches']), np.mean(results_freak['matches']), np.mean(results_freak_sift['matches'])], 
+                  color=['red', 'blue', 'green', 'purple'])
     axs[1, 1].set_title('Average Matches per Attempt')
     axs[1, 1].set_ylabel('Number of Matches')
 
     # Average Features
-    axs[2, 0].bar(['ORB', 'SIFT', 'FREAK'], 
-                  [np.mean(results_orb['features']), np.mean(results_sift['features']), np.mean(results_freak['features'])], 
-                  color=['red', 'blue', 'green'])
+    axs[2, 0].bar(['ORB', 'SIFT', 'FREAK', 'FREAK+SIFT'], 
+                  [np.mean(results_orb['features']), np.mean(results_sift['features']), np.mean(results_freak['features']), np.mean(results_freak_sift['features'])], 
+                  color=['red', 'blue', 'green', 'purple'])
     axs[2, 0].set_title('Average Features per Attempt')
     axs[2, 0].set_ylabel('Number of Features')
 
