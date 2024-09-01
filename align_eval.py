@@ -11,9 +11,15 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from datetime import datetime
 import math
+import argparse
 
-# Toggle debugging
-DEBUG = True
+# Set up argument parser
+parser = argparse.ArgumentParser(description="Run the form alignment evaluation.")
+parser.add_argument('--debug', action='store_true', help="Enable debug mode (default: False)")
+args = parser.parse_args()
+
+# Toggle debugging based on argument
+DEBUG = args.debug
 
 def debug_print(message):
     if DEBUG:
