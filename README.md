@@ -45,9 +45,17 @@ pip install -r requirements.txt
 
 2. **Run the Script**: Execute the `align_eval.py` script.
 
-   ```bash
-   python align_eval.py
-   ```
+   - **Default mode (debugging off)**:
+   
+     ```bash
+     python align_eval.py
+     ```
+
+   - **Debug mode (debugging on)**:
+   
+     ```bash
+     python align_eval.py --debug
+     ```
 
 3. **View Results**: The results will be saved in the `results/` folder as a PDF report.
 
