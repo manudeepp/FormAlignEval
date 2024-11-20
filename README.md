@@ -72,3 +72,8 @@ The repository includes a basic test set to help you get started. However, to th
 ### Encouragement for Exploration
 
 This project is just the starting point. I encourage users to experiment with the template image and create their own test sets by introducing various distortions. This will help you to explore the strengths and weaknesses of different alignment algorithms in a more comprehensive manner.
+
+---
+
+## License
+This project is licensed under the [MIT License](https://opensource.org/licenses/MIT) - feel free to use, modify, and distribute it as long as proper credit is given to the original author and contributors.
